@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --bs-body-font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+body{
+    background-color: #f8fafc;
+}
+
+.app-navbar {
+    background: #fff;
+    border-bottom: 1px solid #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.app-navbar .navbar-brand {
+    font-weight: 700;
+    font-size: 1.15rem;
+    color: #2563eb;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.app-navbar .navbar-brand i {
+    font-size: 1.3rem;
+    margin-top: 1px;
+}
+
+.fa-solid, .fas {
+    font-weight: 900;
+}
+
+/* 1. Prevent Bootstrap from scaling font sizes on small screens */
+html, body {
+    font-size: 16px !important;
+}
+
+.container {
+    width: 100%;
+    max-width: 1320px;
+    margin: 0 auto;
+}
+
+/* below 1400px */
+@media (max-width: 1399.98px) {
+    .container {
+        max-width: 1140px;
+    }
+}
+
+/* below 1200px */
+@media (max-width: 1199.98px) {
+    .container {
+        max-width: 960px;
+    }
+}
+
+/* below 992px */
+@media (max-width: 991.98px) {
+    .container {
+        max-width: 720px;
+    }
+}
+
+/* below 768px */
+@media (max-width: 767.98px) {
+    .container {
+        max-width: 540px;
+    }
+}
+
+/* below 576px */
+@media (max-width: 575.98px) {
+    .container {
+        max-width: 100%;
+        padding: 0 16px;
+    }
+}
+
+
+.table th, .table td {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}

@@ -1,0 +1,10 @@
+/vendor/
+credentials.json
+.vscode/
+.DS_Store
+Thumbs.db
+
+/uploads/
+/app/Config/
+sample.csv
+test.php
