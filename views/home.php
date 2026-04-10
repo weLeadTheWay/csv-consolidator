@@ -21,8 +21,7 @@
                     <i class="fa-solid fa-layer-group"></i>
                     CSV BOS Data Consolidator
                 </a>
-                <div class="d-flex gap-2">
-                                        </div>
+                <div class="d-flex gap-2"></div>
             </div>
         </nav>
 
@@ -62,6 +61,27 @@
                 <div class="card p-3 p-md-4 shadow-sm">
 
                     <h5 class="mb-3">Parsed CSV Data</h5>
+                    
+                    <?php if (!empty($fileId)): ?>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+
+                            <div class="text-muted small">
+                                File ready: <strong><?= htmlspecialchars($fileId) ?></strong>
+                            </div>
+
+                            <button id="importBtn"
+                                    class="btn btn-success btn-sm"
+                                    onclick="startImport()">
+
+                                <span id="btnText">
+                                    <i class="bi bi-upload me-1"></i> Import to Database
+                                </span>
+
+                                <span id="btnSpinner" class="spinner-border spinner-border-sm d-none"></span>
+                            </button>
+
+                        </div>
+                    <?php endif; ?>
 
                     <div class="table-responsive" style="max-height: 70vh; overflow-y: auto;">
                         <table class="table table-bordered table-striped table-sm align-middle">
@@ -101,5 +121,66 @@
             <?php endif; ?>
 
         </div>
+        <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
+            <div id="importToast" class="toast align-items-center text-bg-success border-0" role="alert">
+                <div class="d-flex">
+                    <div class="toast-body" id="toastMessage">
+                        Import successful
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            </div>
+        </div>
+
+        
+        <script>
+            function startImport() {
+                const btn = document.getElementById('importBtn');
+                const spinner = document.getElementById('btnSpinner');
+                const text = document.getElementById('btnText');
+
+                // disable button
+                btn.disabled = true;
+                spinner.classList.remove('d-none');
+                text.innerHTML = "Importing...";
+
+                const url = "index.php?file=<?= htmlspecialchars($fileId ?? '') ?>&import=1";
+
+                fetch(url)
+                    .then(async res => {
+                        const text = await res.text();
+
+                        try {
+                            return JSON.parse(text);
+                        } catch (e) {
+                            console.log("RAW RESPONSE:", text);
+                            throw new Error("Invalid JSON response");
+                        }
+                    })
+                    .then(data => {
+
+                        // show toast
+                        document.getElementById('toastMessage').innerHTML =
+                            `Inserted: ${data.inserted} | Updated: ${data.updated}`;
+
+                        const toast = new bootstrap.Toast(document.getElementById('importToast'));
+                        toast.show();
+
+                        // reset button
+                        btn.disabled = false;
+                        spinner.classList.add('d-none');
+                        text.innerHTML = '<i class="bi bi-upload me-1"></i> Import to Database';
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        alert("Import failed - check console");
+
+                        btn.disabled = false;
+                        spinner.classList.add('d-none');
+                        text.innerHTML = "Import to Database";
+                    });
+            }
+        </script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     </body>
 </html>

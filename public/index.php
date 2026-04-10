@@ -1,5 +1,13 @@
 <?php
 
+//LOAD ENV FIRST
+foreach (file(__DIR__ . '/../.env') as $line) {
+    if (trim($line) === '' || str_starts_with(trim($line), '#')) continue;
+
+    [$key, $value] = explode('=', trim($line), 2);
+    putenv("$key=$value");
+}
+
 require_once __DIR__ . '/../app/Services/CsvParser.php';
 require_once __DIR__ . '/../app/Controllers/CsvController.php';
 

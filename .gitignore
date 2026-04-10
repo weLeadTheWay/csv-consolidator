@@ -8,3 +8,5 @@ Thumbs.db
 /app/Config/
 sample.csv
 test.php
+
+.env
