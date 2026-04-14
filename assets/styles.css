@@ -86,3 +86,30 @@ html, body {
     text-overflow: ellipsis;
     max-width: 200px;
 }
+
+.type-card {
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    background: #fff;
+}
+
+.type-card:hover {
+    transform: translateY(-3px) !important;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.08) !important;
+    border-color: #2563eb !important;
+}
+
+.active-card {
+    border: 2px solid #2563eb !important;
+    background: #eff6ff;
+}
+
+.disabled-card {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.mb-2 {
+    margin-bottom: 1rem !important;
+}
+
