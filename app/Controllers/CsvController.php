@@ -29,34 +29,24 @@ class CsvController
         return $id;
     }
 
-    private function fetchExistingRows(array $docNos): array
+    /**
+     * Generate MD5 hash of trackable fields for change detection
+     * @param array $row Row data with Document No and trackable fields
+     * @return string MD5 hash of the concatenated field values
+     */
+    private function generateDataHash(array $row): string
     {
-        if (empty($docNos)) return [];
-
-        $placeholders = implode(',', array_fill(0, count($docNos), '?'));
-
-        $stmt = $this->db->prepare("
-            SELECT 
-                `Document No`,
-                `Status`,
-                `Total Amount`,
-                `Customer Code`,
-                `Customer Name`,
-                `Business Center`,
-                `Division`,
-                `Profit Center`
-            FROM sales_tracking_list
-            WHERE `Document No` IN ($placeholders)
-        ");
-
-        $stmt->execute($docNos);
-
-        $result = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $result[$row['Document No']] = $row;
-        }
-
-        return $result;
+        $hashData = implode('|', [
+            $row['Status'] ?? '',
+            $row['Total Amount'] ?? '',
+            $row['Customer Code'] ?? '',
+            $row['Customer Name'] ?? '',
+            $row['Business Center'] ?? '',
+            $row['Division'] ?? '',
+            $row['Profit Center'] ?? ''
+        ]);
+        
+        return md5($hashData);
     }
 
     public function handleRequest(): array
@@ -108,7 +98,13 @@ class CsvController
         */
         if (isset($_GET['import']) && $_GET['import'] == 1) {
 
-            $result = $this->upsertSmart($filePath);
+            $type = $_GET['type'] ?? 'sales';
+
+            if ($type === 'delcon') {
+                $result = $this->upsertDelcon($filePath);
+            } else {
+                $result = $this->upsertSmart($filePath);
+            }
 
             ob_clean();
             header('Content-Type: application/json');
@@ -116,8 +112,8 @@ class CsvController
             echo json_encode([
                 'success' => true,
                 'inserted' => $result['inserted'],
-                'updated'  => $result['updated'],
-                'total'    => $result['inserted'] + $result['updated']
+                'updated'  => $result['updated'] ?? 0,
+                'total'    => $result['inserted'] + ($result['updated'] ?? 0)
             ]);
 
             exit;
@@ -216,150 +212,323 @@ class CsvController
 
     /*
     ======================
-    BATCH PROCESSOR
+    OPTIMIZED BATCH PROCESSOR (INSERT...ON DUPLICATE KEY UPDATE)
+    Handles both inserts and updates in a single SQL statement
+    Uses MD5 hash for efficient change detection
     ======================
     */
     private function processBatch(array $rows, string $now): array
     {
+        if (empty($rows)) {
+            return ['inserted' => 0, 'updated' => 0];
+        }
+
         $values = [];
         $params = [];
-
         $docNos = [];
         $cleanRows = [];
+        $i = 0;
 
+        // Normalize and prepare rows
         foreach ($rows as $row) {
-
             $docNo = $row['Document No'] ?? null;
             if (!$docNo) continue;
 
-            // ✅ FIX 3: normalize CSV values here (TRIM + consistency)
+            // Trim all string values
             $row = array_map(function ($val) {
                 return is_string($val) ? trim($val) : $val;
             }, $row);
 
+            // Encode normalization
+            $row = array_map(function ($val) {
+                if (!is_string($val)) return $val;
+                $val = mb_convert_encoding($val, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
+                $val = preg_replace('/[\x00-\x1F\x7F]/u', '', $val);
+                return $val;
+            }, $row);
+
+            $row['Status'] = $row['Status'] ?? null;
+
+            $docNos[] = $docNo;
+            $cleanRows[] = $row;
+        }
+
+        // Fetch existing data in ONE query
+        $existing = $this->fetchExistingRowsOptimized($docNos);
+
+        $inserted = 0;
+        $updated = 0;
+
+        // Build single INSERT...ON DUPLICATE KEY UPDATE statement
+        foreach ($cleanRows as $row) {
+            $docNo = $row['Document No'];
+            $old = $existing[$docNo] ?? null;
+            
+            $siDataId = $old ? $old['si_data_id'] : $this->generateSiDataId();
+            $newDataHash = $this->generateDataHash($row);
+            $oldDataHash = $old['data_hash'] ?? null;
+
+            // Pre-compute if this would be inserted or updated
+            if (!$old) {
+                $inserted++;
+            } else if ($newDataHash !== $oldDataHash) {
+                $updated++;
+            }
+            // If hash matches and row exists, skip (no changes)
+
+            $values[] = "(
+                :si{$i},
+                :doc{$i},
+                :status{$i},
+                :amount{$i},
+                :custCode{$i},
+                :custName{$i},
+                :biz{$i},
+                :division{$i},
+                :profit{$i},
+                :hash{$i},
+                :added{$i},
+                :updated{$i}
+            )";
+
+            $params[":si{$i}"]       = $siDataId;
+            $params[":doc{$i}"]      = $docNo;
+            $params[":status{$i}"]   = $row['Status'];
+            $params[":amount{$i}"]   = $row['Total Amount'];
+            $params[":custCode{$i}"] = $row['Customer Code'];
+            $params[":custName{$i}"] = $row['Customer Name'];
+            $params[":biz{$i}"]      = $row['Business Center'];
+            $params[":division{$i}"] = $row['Division'];
+            $params[":profit{$i}"]   = $row['Profit Center'];
+            $params[":hash{$i}"]     = $newDataHash;
+            $params[":added{$i}"]    = $old ? $old['date_added'] : $now;
+            $params[":updated{$i}"]  = $now;
+
+            $i++;
+        }
+
+        if (empty($values)) {
+            return ['inserted' => 0, 'updated' => 0];
+        }
+
+        // Single batch statement: INSERT new rows, UPDATE changed rows only
+        $sql = "
+            INSERT INTO sales_tracking_list (
+                si_data_id,
+                `Document No`,
+                `Status`,
+                `Total Amount`,
+                `Customer Code`,
+                `Customer Name`,
+                `Business Center`,
+                `Division`,
+                `Profit Center`,
+                data_hash,
+                date_added,
+                date_last_update
+            )
+            VALUES " . implode(',', $values) . "
+            ON DUPLICATE KEY UPDATE
+                `Status`           = VALUES(`Status`),
+                `Total Amount`     = VALUES(`Total Amount`),
+                `Customer Code`    = VALUES(`Customer Code`),
+                `Customer Name`    = VALUES(`Customer Name`),
+                `Business Center`  = VALUES(`Business Center`),
+                `Division`         = VALUES(`Division`),
+                `Profit Center`    = VALUES(`Profit Center`),
+                data_hash          = VALUES(data_hash),
+                date_last_update   = VALUES(date_last_update)
+        ";
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+
+        return [
+            'inserted' => $inserted,
+            'updated' => $updated
+        ];
+    }
+
+    /**
+     * Optimized version: Fetch existing rows in a single query
+     * Groups by Document No for O(1) lookup
+     */
+    private function fetchExistingRowsOptimized(array $docNos): array
+    {
+        if (empty($docNos)) return [];
+
+        $placeholders = implode(',', array_fill(0, count($docNos), '?'));
+
+        $stmt = $this->db->prepare("
+            SELECT 
+                si_data_id,
+                `Document No`,
+                data_hash,
+                date_added
+            FROM sales_tracking_list
+            WHERE `Document No` IN ($placeholders)
+        ");
+
+        $stmt->execute($docNos);
+
+        $result = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $result[$row['Document No']] = $row;
+        }
+
+        return $result;
+    }
+
+    /*
+    ======================
+    DELCON UPSERT (BATCHED)
+    ======================
+    */
+    public function upsertDelcon(string $filePath): array
+    {
+        date_default_timezone_set('Asia/Manila');
+        $now = date('Y-m-d H:i:s');
+
+        $inserted = 0;
+
+        if (!file_exists($filePath)) {
+            return ['inserted' => $inserted];
+        }
+
+        $handle = fopen($filePath, "r");
+        $headers = fgetcsv($handle);
+
+        $batch = [];
+        $batchSize = 500;
+
+        while (($row = fgetcsv($handle)) !== false) {
+
+            $row = array_combine($headers, array_pad($row, count($headers), null));
+
+            if (!$row) continue;
+
+            // Normalize: trim all string values
+            $row = array_map(function ($val) {
+                return is_string($val) ? trim($val) : $val;
+            }, $row);
+
+            // Encode normalization
             $row = array_map(function ($val) {
                 if (!is_string($val)) return $val;
 
-                // convert broken encodings to valid UTF-8
                 $val = mb_convert_encoding($val, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
-
-                // remove control characters
                 $val = preg_replace('/[\x00-\x1F\x7F]/u', '', $val);
 
                 return $val;
             }, $row);
 
-            // ensure missing keys become null (important for safe comparison)
-            $row['Status'] = $row['Status'] ?? null;
+            $batch[] = $row;
 
-            $docNos[] = $docNo;
-            $cleanRows[$docNo] = $row;
+            if (count($batch) === $batchSize) {
+                $result = $this->processDelconBatch($batch, $now);
+                $inserted += $result['inserted'];
+                $batch = [];
+            }
         }
 
-        $existing = $this->fetchExistingRows($docNos);
+        if (!empty($batch)) {
+            $result = $this->processDelconBatch($batch, $now);
+            $inserted += $result['inserted'];
+        }
+
+        fclose($handle);
+
+        return ['inserted' => $inserted];
+    }
+
+    /*
+    ======================
+    DELCON BATCH PROCESSOR
+    ======================
+    */
+    private function processDelconBatch(array $rows, string $now): array
+    {
+        $values = [];
+        $params = [];
 
         $inserted = 0;
-        $updated = 0;
-
         $i = 0;
 
-        foreach ($cleanRows as $docNo => $row) {
+        foreach ($rows as $row) {
 
-            $isNew = !isset($existing[$docNo]);
+            // Extract required fields
+            $siNumber = $row['SI Number'] ?? null;
+            
+            // Skip rows without SI Number (required for database constraint)
+            if (!$siNumber) {
+                continue;
+            }
+            
+            $unitPrice = $row['Unit Price'] ?? null;
+            $secondaryQty = $row['Secondary Quantity'] ?? null;
+            $secondaryUom = $row['Secondary UOM'] ?? null;
+            $receiptQty = $row['Receipt Qty'] ?? null;
+            $receiptKilos = $row['Receipt Kilos'] ?? null;
+            $returnQty = $row['Return Qty'] ?? null;
 
-            $hasChanged = false;
-
-            if (!$isNew) {
-                $old = $existing[$docNo];
-
-                $hasChanged =
-                    ($old['Status'] ?? null) != ($row['Status'] ?? null) ||
-                    ($old['Total Amount'] ?? null) != ($row['Total Amount'] ?? null) ||
-                    ($old['Customer Code'] ?? null) != ($row['Customer Code'] ?? null) ||
-                    ($old['Customer Name'] ?? null) != ($row['Customer Name'] ?? null) ||
-                    ($old['Business Center'] ?? null) != ($row['Business Center'] ?? null) ||
-                    ($old['Division'] ?? null) != ($row['Division'] ?? null) ||
-                    ($old['Profit Center'] ?? null) != ($row['Profit Center'] ?? null);
+            // Convert numeric values
+            if ($unitPrice !== null) {
+                $unitPrice = (float)str_replace(',', '', (string)$unitPrice);
+            }
+            if ($secondaryQty !== null) {
+                $secondaryQty = (int)$secondaryQty;
+            }
+            if ($receiptQty !== null) {
+                $receiptQty = (int)$receiptQty;
+            }
+            if ($receiptKilos !== null) {
+                $receiptKilos = (int)$receiptKilos;
+            }
+            if ($returnQty !== null) {
+                $returnQty = (int)$returnQty;
             }
 
-            if ($isNew) {
-                // INSERT
-                $values[] = "(
-                    :si{$i},
-                    :doc{$i},
-                    :status{$i},
-                    :amount{$i},
-                    :custCode{$i},
-                    :custName{$i},
-                    :biz{$i},
-                    :division{$i},
-                    :profit{$i},
-                    :added{$i},
-                    NULL
-                )";
+            // BUILD INSERT VALUE SET
+            $values[] = "(
+                :delconId{$i},
+                :siNum{$i},
+                :unitPrice{$i},
+                :secQty{$i},
+                :secUom{$i},
+                :recQty{$i},
+                :recKilos{$i},
+                :retQty{$i},
+                :added{$i}
+            )";
 
-                $params[":si{$i}"]       = $this->generateSiDataId();
-                $params[":doc{$i}"]      = $docNo;
-                $params[":status{$i}"] = $row['Status'] ?? null;
-                $params[":amount{$i}"]   = $row['Total Amount'] ?? null;
-                $params[":custCode{$i}"] = $row['Customer Code'] ?? null;
-                $params[":custName{$i}"] = $row['Customer Name'] ?? null;
-                $params[":biz{$i}"]      = $row['Business Center'] ?? null;
-                $params[":division{$i}"] = $row['Division'] ?? null;
-                $params[":profit{$i}"]   = $row['Profit Center'] ?? null;
-                $params[":added{$i}"]    = $now;
+            $params[":delconId{$i}"]  = $this->generateDelconId();
+            $params[":siNum{$i}"]     = $siNumber;
+            $params[":unitPrice{$i}"] = $unitPrice;
+            $params[":secQty{$i}"]    = $secondaryQty;
+            $params[":secUom{$i}"]    = $secondaryUom;
+            $params[":recQty{$i}"]    = $receiptQty;
+            $params[":recKilos{$i}"]  = $receiptKilos;
+            $params[":retQty{$i}"]    = $returnQty;
+            $params[":added{$i}"]     = $now;
 
-                $inserted++;
-                $i++;
-
-            } elseif ($hasChanged) {
-                // UPDATE
-                $stmt = $this->db->prepare("
-                    UPDATE sales_tracking_list
-                    SET 
-                        `Status` = ?,
-                        `Total Amount` = ?,
-                        `Customer Code` = ?,
-                        `Customer Name` = ?,
-                        `Business Center` = ?,
-                        `Division` = ?,
-                        `Profit Center` = ?,
-                        date_last_update = ?
-                    WHERE `Document No` = ?
-                ");
-
-                $stmt->execute([
-                    $row['Status'] ?? null,
-                    $row['Total Amount'] ?? null,
-                    $row['Customer Code'] ?? null,
-                    $row['Customer Name'] ?? null,
-                    $row['Business Center'] ?? null,
-                    $row['Division'] ?? null,
-                    $row['Profit Center'] ?? null,
-                    $now,
-                    $docNo
-                ]);
-
-                $updated++;
-            }
+            $inserted++;
+            $i++;
         }
 
-        // batch insert new rows only
+        // Batch insert all rows
         if (!empty($values)) {
 
             $sql = "
-                INSERT INTO sales_tracking_list (
-                    si_data_id,
-                    `Document No`,
-                    `Status`,
-                    `Total Amount`,
-                    `Customer Code`,
-                    `Customer Name`,
-                    `Business Center`,
-                    `Division`,
-                    `Profit Center`,
-                    date_added,
-                    date_last_update
+                INSERT INTO delcon_si (
+                    delcon_data_id,
+                    `SI Number`,
+                    `Unit Price`,
+                    `Secondary Quantity`,
+                    `Secondary UOM`,
+                    `Receipt Qty`,
+                    `Receipt Kilos`,
+                    `Return Qty`,
+                    date_added
                 )
                 VALUES " . implode(',', $values);
 
@@ -367,9 +536,23 @@ class CsvController
             $stmt->execute($params);
         }
 
-        return [
-            'inserted' => $inserted,
-            'updated' => $updated
-        ];
+        return ['inserted' => $inserted];
+    }
+
+    /*
+    ======================
+    DELCON HELPER: Generate Delcon Data ID
+    ======================
+    */
+    private function generateDelconId(int $length = 12): string
+    {
+        $chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+        $id = '';
+
+        for ($i = 0; $i < $length; $i++) {
+            $id .= $chars[random_int(0, strlen($chars) - 1)];
+        }
+
+        return $id;
     }
 }

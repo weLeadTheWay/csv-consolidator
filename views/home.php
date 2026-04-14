@@ -94,9 +94,9 @@ $showSetup = !$hasSession;
                                 </a>
                             </li>
                             <li>
-                                <span class="dropdown-item text-muted">
-                                    📦 Delcon (Coming Soon)
-                                </span>
+                                <a class="dropdown-item" href="index.php?type=delcon">
+                                    📦 Delcon w/ SI Masterlist
+                                </a>
                             </li>
                         </ul>
                     </div>

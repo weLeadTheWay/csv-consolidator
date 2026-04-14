@@ -10,6 +10,15 @@ foreach (file(__DIR__ . '/../.env') as $line) {
 
 require_once __DIR__ . '/../app/Services/CsvParser.php';
 require_once __DIR__ . '/../app/Controllers/CsvController.php';
+require_once __DIR__ . '/../app/Services/DatabaseMigration.php';
+
+// Run database migrations once at startup
+static $migrationsRun = false;
+if (!$migrationsRun) {
+    $migration = new DatabaseMigration();
+    $migration->runAllMigrations();
+    $migrationsRun = true;
+}
 
 $controller = new CsvController();
 $result = $controller->handleRequest();
