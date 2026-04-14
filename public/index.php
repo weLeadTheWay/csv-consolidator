@@ -3,7 +3,6 @@
 //LOAD ENV FIRST
 foreach (file(__DIR__ . '/../.env') as $line) {
     if (trim($line) === '' || str_starts_with(trim($line), '#')) continue;
-
     [$key, $value] = explode('=', trim($line), 2);
     putenv("$key=$value");
 }
@@ -20,8 +19,28 @@ if (!$migrationsRun) {
     $migrationsRun = true;
 }
 
-$controller = new CsvController();
-$result = $controller->handleRequest();
+$source = $_GET['source'] ?? 'csv';
+
+switch ($source) {
+    case 'bank_customer':
+        require_once __DIR__ . '/../app/Controllers/GoogleSheetBankCustomerController.php';
+        $controller = new GoogleSheetBankCustomerController();
+        $result = $controller->handleRequest();
+        break;
+
+    case 'csv':
+    default:
+        require_once __DIR__ . '/../app/Controllers/CsvController.php';
+        $controller = new CsvController();
+        $result = $controller->handleRequest();
+        break;
+}
+
+if ($source === 'bank_customer') {
+    header('Content-Type: application/json');
+    echo json_encode($result);
+    exit;
+}
 
 /**
  * Move ONLY data preparation here
@@ -59,6 +78,7 @@ function generatePagination($currentPage, $totalPages, $fileId) {
 
     return implode('', $links);
 }
+
 
 /**
  * PASS everything to the view

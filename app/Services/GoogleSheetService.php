@@ -92,4 +92,53 @@ class GoogleSheetService implements GoogleSheetServiceInterface
 
         return $result->spreadsheetId;
     }
+
+    public function fetchSheetData(string $sheetName): array
+    {
+        $client = new \Google\Client();
+        $client->setAuthConfig(__DIR__ . '/../Config/csv-consolidator-credentials.json');
+        $client->addScope(\Google\Service\Sheets::SPREADSHEETS_READONLY);
+
+        $service = new \Google\Service\Sheets($client);
+
+        $spreadsheetId = getenv("GOOGLE_SHEET_ID");
+
+        if (!$spreadsheetId) {
+            throw new Exception("Missing GOOGLE_SHEET_ID in .env");
+        }
+
+        $response = $service->spreadsheets_values->get(
+            $spreadsheetId,
+            $sheetName
+        );
+
+        $rows = $response->getValues();
+
+        if (!$rows || count($rows) < 2) return [];
+
+        $headers = array_map('trim', $rows[0]);
+        $data = [];
+
+        for ($i = 1; $i < count($rows); $i++) {
+            $row = $rows[$i];
+            $item = [];
+
+            foreach ($headers as $index => $key) {
+                $value = $row[$index] ?? null;
+                $item[$key] = $this->normalize($value);
+            }
+
+            $data[] = $item;
+        }
+
+        return $data;
+    }
+
+    private function normalize($value)
+    {
+        if ($value === null || $value === '') {
+            return "-";
+        }
+        return $value;
+    }
 }
