@@ -21,9 +21,11 @@ class GoogleSheetBankCustomerController
         $result = $this->bankService->upsert($rows);
 
         return [
-            "status" => "success",
-            "inserted" => $result["inserted"],
-            "updated" => $result["updated"]
+            "status" => $result["status"],
+            "processed" => $result["processed"],
+            "skipped (inactive)" => $result["skipped"],
+            "bank_customer_rows" => $result["bank_customer_rows"],
+            "updated_customer_nos" => $result["updated_customer_nos"]
         ];
     }
 }
