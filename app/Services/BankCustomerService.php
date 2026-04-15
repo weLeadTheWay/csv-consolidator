@@ -133,12 +133,15 @@ class BankCustomerService
         $countStmt = $this->db->query("SELECT COUNT(*) as total FROM bank_customer");
         $count = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
         $changedCustomerNos = array_values($changedCustomerNos);
+        // $totalChanges = count($changedCustomerNos);
+        
 
         return [
             "status" => "SUCCESS",
             "processed" => $inserted,
             "skipped" => $skipped,
             "bank_customer_rows" => (int)$count,
+            // "total_changes" => $totalChanges,
             "updated_customer_nos" => $changedCustomerNos
         ];
     }
