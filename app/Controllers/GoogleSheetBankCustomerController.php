@@ -25,6 +25,7 @@ class GoogleSheetBankCustomerController
             "processed" => $result["processed"],
             "skipped (inactive)" => $result["skipped"],
             "bank_customer_rows" => $result["bank_customer_rows"],
+            "total_changes" => $result["total_changes"],
             "updated_customer_nos" => $result["updated_customer_nos"]
         ];
     }
