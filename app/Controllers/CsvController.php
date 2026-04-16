@@ -17,6 +17,7 @@ class CsvController
     }
     
     // Generate unique IF for si_data_id
+    /*
     private function generateSiDataId(int $length = 8): string
     {
         $chars = '0123456789abcdefghijklmnopqrstuvwxyz';
@@ -28,26 +29,7 @@ class CsvController
 
         return $id;
     }
-
-    /**
-     * Generate MD5 hash of trackable fields for change detection
-     * @param array $row Row data with Document No and trackable fields
-     * @return string MD5 hash of the concatenated field values
-     */
-    private function generateDataHash(array $row): string
-    {
-        $hashData = implode('|', [
-            $row['Status'] ?? '',
-            $row['Total Amount'] ?? '',
-            $row['Customer Code'] ?? '',
-            $row['Customer Name'] ?? '',
-            $row['Business Center'] ?? '',
-            $row['Division'] ?? '',
-            $row['Profit Center'] ?? ''
-        ]);
-        
-        return md5($hashData);
-    }
+    */
 
     public function handleRequest(): array
     {
@@ -111,9 +93,9 @@ class CsvController
 
             echo json_encode([
                 'success' => true,
-                'inserted' => $result['inserted'],
-                'updated'  => $result['updated'] ?? 0,
-                'total'    => $result['inserted'] + ($result['updated'] ?? 0)
+                'processed' => $result['processed'] ?? 0,
+                'changed_count' => $result['changed_count'] ?? 0,
+                'total' => $result['total'] ?? 0
             ]);
 
             exit;
@@ -155,7 +137,7 @@ class CsvController
 
     /*
     ======================
-    SMART UPSERT (BATCHED)
+    SMART UPSERT SALES TRACKING LIST (BATCHED)
     ======================
     */
     public function upsertSmart(string $filePath): array
@@ -163,11 +145,11 @@ class CsvController
         date_default_timezone_set('Asia/Manila');
         $now = date('Y-m-d H:i:s');
 
-        $inserted = 0;
-        $updated = 0;
-
         if (!file_exists($filePath)) {
-            return compact('inserted', 'updated');
+            return [
+                'status' => 'FAILED',
+                'message' => 'File not found'
+            ];
         }
 
         $handle = fopen($filePath, "r");
@@ -176,48 +158,79 @@ class CsvController
         $batch = [];
         $batchSize = 500;
 
+        $processedRows = 0;
+        $skippedRows = 0;
+
+        $changedDocs = [];
+        $existing = [];
+
+        $stmt = $this->db->query("
+            SELECT 
+                `Document No`,
+                `Status`,
+                `Total Amount`,
+                `Customer Code`,
+                `Customer Name`,
+                `Business Center`,
+                `Division`,
+                `Profit Center`
+            FROM sales_tracking_list
+        ");
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $key = trim((string)$row['Document No']);
+            $existing[$key] = $row;
+        }
+
         while (($row = fgetcsv($handle)) !== false) {
 
             $row = array_combine($headers, array_pad($row, count($headers), null));
 
-            if (!$row || !isset($row['Document No'])) continue;
+            if (!$row || empty($row['Document No'])) {
+                $skippedRows++;
+                continue;
+            }
 
-            $row = array_map(function ($val) {
-                return is_string($val) ? trim($val) : $val;
-            }, $row);
+            $row = array_map(fn($val) =>
+                is_string($val) ? trim($val) : $val,
+            $row);
 
             $batch[] = $row;
 
             if (count($batch) === $batchSize) {
-                $result = $this->processBatch($batch, $now);
-                $inserted += $result['inserted'];
-                $updated += $result['updated'];
+                $result = $this->processBatch($batch, $now, $changedDocs, $existing);
+                $processedRows += $result['processed'];
                 $batch = [];
             }
         }
 
         if (!empty($batch)) {
-            $result = $this->processBatch($batch, $now);
-            $inserted += $result['inserted'];
-            $updated += $result['updated'];
+            $result = $this->processBatch($batch, $now, $changedDocs, $existing);
+            $processedRows += $result['processed'];
         }
 
         fclose($handle);
+        $countStmt = $this->db->query("SELECT COUNT(*) as total FROM sales_tracking_list");
+        $dbCount = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+        $uniqueChanged = array_values(array_unique($changedDocs));
 
         return [
-            'inserted' => $inserted,
-            'updated' => $updated
+            'status' => 'SUCCESS',
+            'processed' => $processedRows,
+            'skipped' => $skippedRows,
+            'changed_count' => count($uniqueChanged),
+            'updated_docs' => $uniqueChanged,
+            'total' => (int)$dbCount
         ];
     }
 
     /*
     ======================
-    OPTIMIZED BATCH PROCESSOR (INSERT...ON DUPLICATE KEY UPDATE)
-    Handles both inserts and updates in a single SQL statement
-    Uses MD5 hash for efficient change detection
+    BATCH PROCESSOR SALES TRACKING LIST 
     ======================
     */
-    private function processBatch(array $rows, string $now): array
+    private function processBatch(array $rows, string $now, array &$changedDocs, array &$existing): array
     {
         if (empty($rows)) {
             return ['inserted' => 0, 'updated' => 0];
@@ -225,59 +238,19 @@ class CsvController
 
         $values = [];
         $params = [];
-        $docNos = [];
-        $cleanRows = [];
         $i = 0;
 
-        // Normalize and prepare rows
         foreach ($rows as $row) {
-            $docNo = $row['Document No'] ?? null;
+
+            // Normalize numeric fields BEFORE comparison
+            $row['Total Amount'] = isset($row['Total Amount'])
+                ? number_format((float)str_replace(',', '', $row['Total Amount']), 2, '.', '')
+                : '0.00';
+
+            $docNo = trim((string)($row['Document No'] ?? ''));
             if (!$docNo) continue;
 
-            // Trim all string values
-            $row = array_map(function ($val) {
-                return is_string($val) ? trim($val) : $val;
-            }, $row);
-
-            // Encode normalization
-            $row = array_map(function ($val) {
-                if (!is_string($val)) return $val;
-                $val = mb_convert_encoding($val, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
-                $val = preg_replace('/[\x00-\x1F\x7F]/u', '', $val);
-                return $val;
-            }, $row);
-
-            $row['Status'] = $row['Status'] ?? null;
-
-            $docNos[] = $docNo;
-            $cleanRows[] = $row;
-        }
-
-        // Fetch existing data in ONE query
-        $existing = $this->fetchExistingRowsOptimized($docNos);
-
-        $inserted = 0;
-        $updated = 0;
-
-        // Build single INSERT...ON DUPLICATE KEY UPDATE statement
-        foreach ($cleanRows as $row) {
-            $docNo = $row['Document No'];
-            $old = $existing[$docNo] ?? null;
-            
-            $siDataId = $old ? $old['si_data_id'] : $this->generateSiDataId();
-            $newDataHash = $this->generateDataHash($row);
-            $oldDataHash = $old['data_hash'] ?? null;
-
-            // Pre-compute if this would be inserted or updated
-            if (!$old) {
-                $inserted++;
-            } else if ($newDataHash !== $oldDataHash) {
-                $updated++;
-            }
-            // If hash matches and row exists, skip (no changes)
-
             $values[] = "(
-                :si{$i},
                 :doc{$i},
                 :status{$i},
                 :amount{$i},
@@ -286,23 +259,64 @@ class CsvController
                 :biz{$i},
                 :division{$i},
                 :profit{$i},
-                :hash{$i},
                 :added{$i},
                 :updated{$i}
             )";
 
-            $params[":si{$i}"]       = $siDataId;
             $params[":doc{$i}"]      = $docNo;
-            $params[":status{$i}"]   = $row['Status'];
-            $params[":amount{$i}"]   = $row['Total Amount'];
-            $params[":custCode{$i}"] = $row['Customer Code'];
-            $params[":custName{$i}"] = $row['Customer Name'];
-            $params[":biz{$i}"]      = $row['Business Center'];
-            $params[":division{$i}"] = $row['Division'];
-            $params[":profit{$i}"]   = $row['Profit Center'];
-            $params[":hash{$i}"]     = $newDataHash;
-            $params[":added{$i}"]    = $old ? $old['date_added'] : $now;
+            $params[":status{$i}"]   = $row['Status'] ?? null;
+            $params[":amount{$i}"]   = $row['Total Amount'] ?? null;
+            $params[":custCode{$i}"] = $row['Customer Code'] ?? null;
+            $params[":custName{$i}"] = $row['Customer Name'] ?? null;
+            $params[":biz{$i}"]      = $row['Business Center'] ?? null;
+            $params[":division{$i}"] = $row['Division'] ?? null;
+            $params[":profit{$i}"]   = $row['Profit Center'] ?? null;
+            $params[":added{$i}"]    = $now;
             $params[":updated{$i}"]  = $now;
+
+            $dbRow = $existing[$docNo] ?? null;
+
+            $normalize = function ($val) {
+                if ($val === null || $val === '') return '';
+                return trim((string)$val);
+            };
+
+            $isChanged = false;
+
+            if ($dbRow) {
+                if (
+                    $normalize($dbRow['Status']) !== $normalize($row['Status']) ||
+                    $normalize($dbRow['Total Amount']) !== $normalize($row['Total Amount']) ||
+                    $normalize($dbRow['Customer Code']) !== $normalize($row['Customer Code']) ||
+                    $normalize($dbRow['Customer Name']) !== $normalize($row['Customer Name']) ||
+                    $normalize($dbRow['Business Center']) !== $normalize($row['Business Center']) ||
+                    $normalize($dbRow['Division']) !== $normalize($row['Division']) ||
+                    $normalize($dbRow['Profit Center']) !== $normalize($row['Profit Center'])
+                ) {
+                    $isChanged = true;
+                }
+            } else {
+                $isChanged = true;
+            }
+
+            if ($isChanged) {
+                $changedDocs[$docNo] = $docNo;
+            }
+
+            if ($isChanged && count($changedDocs) < 20) {
+                error_log("CHANGED: " . $docNo);
+            }
+
+            $existing[$docNo] = [
+                'Document No'   => $docNo,
+                'Status'        => $row['Status'] ?? null,
+                'Total Amount'  => $row['Total Amount'] ?? null,
+                'Customer Code' => $row['Customer Code'] ?? null,
+                'Customer Name' => $row['Customer Name'] ?? null,
+                'Business Center'=> $row['Business Center'] ?? null,
+                'Division'      => $row['Division'] ?? null,
+                'Profit Center' => $row['Profit Center'] ?? null
+            ];
 
             $i++;
         }
@@ -311,10 +325,8 @@ class CsvController
             return ['inserted' => 0, 'updated' => 0];
         }
 
-        // Single batch statement: INSERT new rows, UPDATE changed rows only
         $sql = "
             INSERT INTO sales_tracking_list (
-                si_data_id,
                 `Document No`,
                 `Status`,
                 `Total Amount`,
@@ -323,29 +335,25 @@ class CsvController
                 `Business Center`,
                 `Division`,
                 `Profit Center`,
-                data_hash,
                 date_added,
                 date_last_update
             )
             VALUES " . implode(',', $values) . "
             ON DUPLICATE KEY UPDATE
-                `Status`           = VALUES(`Status`),
-                `Total Amount`     = VALUES(`Total Amount`),
-                `Customer Code`    = VALUES(`Customer Code`),
-                `Customer Name`    = VALUES(`Customer Name`),
-                `Business Center`  = VALUES(`Business Center`),
-                `Division`         = VALUES(`Division`),
-                `Profit Center`    = VALUES(`Profit Center`),
-                data_hash          = VALUES(data_hash),
-                date_last_update   = VALUES(date_last_update)
+                `Status`          = VALUES(`Status`),
+                `Total Amount`    = VALUES(`Total Amount`),
+                `Customer Code`   = VALUES(`Customer Code`),
+                `Customer Name`   = VALUES(`Customer Name`),
+                `Business Center` = VALUES(`Business Center`),
+                `Division`        = VALUES(`Division`),
+                `Profit Center`   = VALUES(`Profit Center`)
         ";
 
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
 
         return [
-            'inserted' => $inserted,
-            'updated' => $updated
+            'processed' => $i
         ];
     }
 

@@ -269,7 +269,7 @@ $showSetup = !$hasSession;
                 .then(data => {
 
                     document.getElementById('toastMessage').innerHTML =
-                        `Inserted: ${data.inserted} | Updated: ${data.updated}`;
+                        `Processed: ${data.processed || 0} | Changes: ${data.changed_count || 0} | Total DB: ${data.total || 0}`;
 
                     new bootstrap.Toast(document.getElementById('importToast')).show();
 
