@@ -19,18 +19,6 @@ Multi-pipeline CSV data processing system for Sales, Delcon, and Bank Customer d
 ## Architecture
 
 ```
-index.php                          # Router – client selector or dispatch
-app/
-  BaseApp.php                      # Shared: OutputSchema, HtmlEscaper, ClientRegistry, BaseApp
-  Clients/
-    Super8App.php                  # Super8 client logic (master data + PO parsing)
-    OSaveApp.php                   # OSave client logic (placeholder)
-    ShopifyApp.php                 # Shopify client logic (placeholder)
-views/
-  select_client.php                # Client picker landing page
-  super8/home.php                  # Super8 UI
-  osave/home.php                   # OSave UI
-  shopify/home.php                 # Shopify UI
 
 app/
   Config/
