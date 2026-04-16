@@ -2,7 +2,12 @@
 $type = $_GET['type'] ?? null;
 $fileId = $_GET['file'] ?? null;
 
-$hasSession = !empty($_GET['type']) || !empty($_GET['file']);
+$source = $_GET['source'] ?? 'csv';
+
+$hasSession =
+    !empty($_GET['type']) ||
+    !empty($_GET['file']) ||
+    $source !== 'csv';
 $showSetup = !$hasSession;
 ?>
 
@@ -64,6 +69,36 @@ $showSetup = !$hasSession;
                                     </p>
                                 </div>
                             </a>
+                        </div>
+
+                         <!-- BANK CUSTOMER BIG CARD -->
+                        <div class="col-12 col-md-6">
+                            <div class="border rounded p-4 h-100 type-card bank-card position-relative overflow-hidden">
+
+                                <div class="sync-area" onclick="runBankCustomer(this.closest('.type-card'))">
+                                    <h5 class="mb-2">🏦 Bank Customer Sync</h5>
+                                    <p class="text-muted mb-0">
+                                        Sync bank customer data from external source.
+                                    </p>
+                                </div>
+                                <div class="bank-status mt-3"></div>
+
+                                <!-- LOADING BAR -->
+                                <div class="bank-loading d-none position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 d-flex flex-column justify-content-center align-items-center">
+
+                                    <div class="w-75">
+                                        <div class="progress">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div>
+                                        </div>
+                                    </div>
+
+                                    <small class="mt-2 text-muted">Syncing bank customers...</small>
+                                </div>
+
+                                <!-- STATUS AREA -->
+                                <div class="bank-status mt-3"></div>
+
+                            </div>
                         </div>
 
                     </div>
@@ -324,6 +359,54 @@ $showSetup = !$hasSession;
 
                         importing = false; // ✅ IMPORTANT (unlock even on error)
                     });
+            }
+
+            function runBankCustomer(card) {
+
+                const overlay = card.querySelector(".bank-loading");
+                const status = card.querySelector(".bank-status");
+
+                // prevent double click
+                if (card.dataset.running === "1") return;
+                card.dataset.running = "1";
+
+                overlay.classList.remove("d-none");
+                status.innerHTML = "";
+
+                fetch("index.php?source=bank_customer")
+                    .then(res => res.json())
+                    .then(data => {
+
+                        overlay.classList.add("d-none");
+
+                        status.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-center small">
+                                <span class="text-success fw-semibold">
+                                    ✔ Sync Complete
+                                </span>
+                            </div>
+                        `;
+
+                        card.dataset.running = "0";
+                    })
+                    .catch(err => {
+
+                        overlay.classList.add("d-none");
+
+                        status.innerHTML = `
+                            <div class="text-danger fw-semibold">
+                                ✖ Sync Failed
+                            </div>
+                        `;
+
+                        card.dataset.running = "0";
+                        console.error(err);
+                    });
+            }
+
+            function openBankDetails(e) {
+                e.stopPropagation(); // prevent re-triggering card click
+                window.location.href = "index.php?source=bank_customer";
             }
 
             function clearSession() {
