@@ -143,18 +143,26 @@ class CsvController
 
             $type = $_GET['type'] ?? 'sales';
 
-            if ($type === 'delcon') {
-                $result = $this->upsertDelcon($filePath);
-            } else {
-                $result = $this->upsertSmart($filePath);
+            try {
+                if ($type === 'delcon') {
+                    $result = $this->upsertDelcon($filePath);
+                } else {
+                    $result = $this->upsertSmart($filePath);
+                }
+            } catch (Throwable $e) {
+                http_response_code(500);
+                echo json_encode([
+                    'success' => false,
+                    'error' => $e->getMessage()
+                ]);
+                exit;
             }
 
             // ob_clean();
             header('Content-Type: application/json');
 
             echo json_encode([
-                'success' => true,
-                'processed' => $result['processed'] ?? 0,
+                'processed' => $result['processed'] ?? ($result['inserted'] ?? 0),
                 'changed_count' => $result['changed_count'] ?? 0,
                 'total' => $result['total'] ?? 0
             ]);
@@ -517,6 +525,7 @@ class CsvController
         return [
             'status' => 'SUCCESS',
             'processed' => $inserted,
+            'changed_count' => 0,
             'total' => (int)$dbCount
         ];
     }
