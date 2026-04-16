@@ -338,8 +338,12 @@ $showSetup = !$hasSession;
                     .then(res => res.json())   // ✅ FIXED (important)
                     .then(data => {
 
+                        const type = "<?= htmlspecialchars($type ?? 'sales') ?>";
+
                         document.getElementById('toastMessage').innerHTML =
-                            `Processed: ${data.processed || 0} | Changes: ${data.changed_count || 0} | Total DB: ${data.total || 0}`;
+                            type === 'delcon'
+                                ? `Delcon Import → Processed: ${data.processed || 0} | Total DB: ${data.total || 0}`
+                                : `Sales Import → Processed: ${data.processed || 0} | Changes: ${data.changed_count || 0} | Total DB: ${data.total || 0}`;
 
                         new bootstrap.Toast(document.getElementById('importToast')).show();
 

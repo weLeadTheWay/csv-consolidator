@@ -508,11 +508,13 @@ class CsvController
 
         fclose($handle);
 
+        $countStmt = $this->db->query("SELECT COUNT(*) as total FROM delcon_si");
+        $dbCount = $countStmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
+
         return [
             'status' => 'SUCCESS',
             'processed' => $inserted,
-            'changed_count' => 0,
-            'total' => 0
+            'total' => (int)$dbCount
         ];
     }
 
