@@ -31,6 +31,43 @@ class CsvController
     }
     */
 
+    private function validateHeaders(array $headers, string $type): array
+    {
+        $headers = array_map('trim', $headers);
+
+        $salesRequired = [
+            'Document No',
+            'Status',
+            'Total Amount',
+            'Customer Code',
+            'Customer Name',
+            'Business Center',
+            'Division',
+            'Profit Center'
+        ];
+
+        $delconRequired = [
+            'SI Number',
+            'Unit Price',
+            'Secondary Quantity',
+            'Secondary UOM',
+            'Receipt Qty',
+            'Receipt Kilos',
+            'Return Qty'
+        ];
+
+        $required = $type === 'delcon' ? $delconRequired : $salesRequired;
+
+        $missing = array_diff($required, $headers);
+        $extra   = array_diff($headers, $required);
+
+        return [
+            'valid' => empty($missing),
+            'missing' => array_values($missing),
+            'extra' => array_values($extra)
+        ];
+    }
+
     public function handleRequest(): array
     {
         $fileId = $_GET['file'] ?? null;
@@ -59,6 +96,27 @@ class CsvController
 
             $type = $_POST['type'] ?? 'sales';
 
+            // ✅ VALIDATE HEADER IMMEDIATELY
+            $file = new SplFileObject($path, 'r');
+            $file->setFlags(SplFileObject::READ_CSV);
+
+            $headers = $file->fgetcsv();
+
+            $validation = $this->validateHeaders($headers, $type);
+
+            // ❌ IF INVALID → DO NOT PROCEED
+            if (!$validation['valid']) {
+
+                // delete bad file (important)
+                unlink($path);
+
+                return [
+                    'error' => 'Invalid CSV Template',
+                    'validation' => $validation
+                ];
+            }
+
+            // ✔ IF VALID → continue
             header("Location: index.php?file=$fileId&page=1&type=$type");
             exit;
         }
@@ -110,29 +168,43 @@ class CsvController
         $limit = 50;
         $offset = ($page - 1) * $limit;
 
-        $handle = fopen($filePath, "r");
-        $headers = fgetcsv($handle);
+        $file = new SplFileObject($filePath, 'r');
+        $file->setFlags(SplFileObject::READ_CSV);
+
+        // read header
+        $headers = $file->fgetcsv();
+        $type = $_GET['type'] ?? 'sales';
+
+        $validation = $this->validateHeaders($headers, $type);
 
         $data = [];
-        $i = 0;
 
-        while (($row = fgetcsv($handle)) !== false) {
+        // jump to start of page (skip header + offset rows)
+        $file->seek($offset + 1);
 
-            if ($i >= $offset && count($data) < $limit) {
-                $data[] = array_combine($headers, array_pad($row, count($headers), null));
+        for ($i = 0; $i < $limit && !$file->eof(); $i++) {
+
+            $row = $file->fgetcsv();
+
+            if (!$row || $row === [null]) continue;
+
+            if (count($row) !== count($headers)) {
+                $row = array_pad($row, count($headers), null);
             }
 
-            $i++;
-
-            if ($i >= $offset + $limit) break;
+            $data[] = array_combine($headers, $row);
         }
 
-        fclose($handle);
+        $validation = $this->validateHeaders($headers, $type);
 
-        return [
-            'data' => $data,
-            'fileId' => $fileId
-        ];
+        // ❌ BLOCK PREVIEW IF INVALID
+        if (!$validation['valid']) {
+            return [
+                'fileId' => $fileId,
+                'validation' => $validation,
+                'data' => []
+            ];
+        }
     }
 
     /*

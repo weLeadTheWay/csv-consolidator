@@ -153,16 +153,18 @@ $showSetup = !$hasSession;
                         </div>
 
                         <div class="col-12 col-md-auto d-grid">
-                            <button class="btn btn-primary w-100">
-                                Upload & Parse
+                            <button id="uploadBtn" class="btn btn-primary w-100" type="submit">
+                                <span id="uploadText">Upload & Parse</span>
+                                <span id="uploadSpinner" class="spinner-border spinner-border-sm d-none ms-2"></span>
                             </button>
                         </div>
 
                         <div class="col-12 col-md-auto d-grid">
-                            <a href="index.php?type=<?= htmlspecialchars($type) ?>"
-                            class="btn btn-outline-danger w-100">
+                            <button type="button"
+                                    class="btn btn-outline-danger w-100"
+                                    onclick="clearSession()">
                                 <i class="bi bi-arrow-repeat me-1"></i> Clear
-                            </a>
+                            </button>
                         </div>
 
                     </div>
@@ -170,15 +172,38 @@ $showSetup = !$hasSession;
 
             <?php endif; ?>
 
+            <?php if (!empty($fileId) && empty($result['data'])): ?>
+                <div class="alert alert-info">
+                    <i class="bi bi-hourglass-split me-1"></i>
+                    Loading preview...
+                </div>
+            <?php endif; ?>
 
             <!-- =========================
                 RESULTS
             ========================== -->
-            <?php if (!empty($result['data'])): ?>
+            <?php if (!empty($result['data']) && empty($result['validation']['missing'])): ?>
 
                 <div class="card p-3 p-md-4 shadow-sm">
 
                     <h5 class="mb-3">Parsed CSV Data</h5>
+
+                    <?php if (!empty($result['validation'])): ?>
+                        <?php if (!$result['validation']['valid']): ?>
+                            <div class="alert alert-danger py-2">
+                                <strong>⚠ Invalid CSV Template</strong><br>
+
+                                Missing columns:
+                                <span class="text-danger">
+                                    <?= implode(', ', $result['validation']['missing']) ?>
+                                </span>
+                            </div>
+                        <?php else: ?>
+                            <div class="alert alert-success py-2">
+                                <strong>✔ Valid CSV format</strong>
+                            </div>
+                        <?php endif; ?>
+                    <?php endif; ?>
 
                     <?php if (!empty($fileId)): ?>
                         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -188,8 +213,9 @@ $showSetup = !$hasSession;
                             </div>
 
                             <button id="importBtn"
-                                    class="btn btn-success btn-sm"
-                                    onclick="startImport()">
+                                class="btn btn-success btn-sm"
+                                onclick="startImport()"
+                                <?= (isset($result['validation']) && !$result['validation']['valid']) ? 'disabled' : '' ?>>
 
                                 <span id="btnText">
                                     <i class="bi bi-upload me-1"></i> Import to Database
@@ -206,9 +232,11 @@ $showSetup = !$hasSession;
 
                             <thead class="table-light">
                                 <tr>
-                                    <?php foreach (array_keys($result['data'][0]) as $header): ?>
-                                        <th><?= htmlspecialchars($header) ?></th>
-                                    <?php endforeach; ?>
+                                    <?php if (!empty($result['data'][0])): ?>
+                                        <?php foreach (array_keys($result['data'][0]) as $header): ?>
+                                            <th><?= htmlspecialchars($header) ?></th>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
                                 </tr>
                             </thead>
 
@@ -225,18 +253,21 @@ $showSetup = !$hasSession;
                         </table>
                     </div>
 
-                    <nav class="mt-3">
-                        <ul class="pagination flex-wrap justify-content-center">
-                            <?= generatePagination($currentPage, $totalPages, $fileId) ?>
-                        </ul>
-                    </nav>
-
                 </div>
 
             <?php elseif (!empty($result['error'])): ?>
+
                 <div class="alert alert-danger">
-                    <?= $result['error'] ?>
+                    <strong><?= $result['error'] ?></strong><br>
+
+                    <?php if (!empty($result['validation']['missing'])): ?>
+                        Missing columns:
+                        <span class="text-danger">
+                            <?= implode(', ', $result['validation']['missing']) ?>
+                        </span>
+                    <?php endif; ?>
                 </div>
+
             <?php endif; ?>
 
         </div>
@@ -252,40 +283,103 @@ $showSetup = !$hasSession;
         </div>
 
         <script>
-        function startImport() {
-            const btn = document.getElementById('importBtn');
-            const spinner = document.getElementById('btnSpinner');
-            const text = document.getElementById('btnText');
+            let importing = false;
 
-            btn.disabled = true;
-            spinner.classList.remove('d-none');
-            text.innerHTML = "Importing...";
+            function startImport() {
+                if (importing) return; // prevent double click
+                importing = true;
 
-            const url = "index.php?file=<?= htmlspecialchars($fileId ?? '') ?>&import=1&type=<?= htmlspecialchars($type ?? 'sales') ?>";
+                const btn = document.getElementById('importBtn');
+                const spinner = document.getElementById('btnSpinner');
+                const text = document.getElementById('btnText');
 
-            fetch(url)
-                .then(res => res.text())
-                .then(text => JSON.parse(text))
-                .then(data => {
+                btn.disabled = true;
+                spinner.classList.remove('d-none');
+                text.innerHTML = "Importing...";
 
-                    document.getElementById('toastMessage').innerHTML =
-                        `Processed: ${data.processed || 0} | Changes: ${data.changed_count || 0} | Total DB: ${data.total || 0}`;
+                const url = "index.php?file=<?= htmlspecialchars($fileId ?? '') ?>&import=1&type=<?= htmlspecialchars($type ?? 'sales') ?>";
 
-                    new bootstrap.Toast(document.getElementById('importToast')).show();
+                fetch(url)
+                    .then(res => res.json())   // ✅ FIXED (important)
+                    .then(data => {
 
-                    btn.disabled = false;
-                    spinner.classList.add('d-none');
-                    text.innerHTML = '<i class="bi bi-upload me-1"></i> Import to Database';
-                })
-                .catch(err => {
-                    console.error(err);
-                    alert("Import failed");
+                        document.getElementById('toastMessage').innerHTML =
+                            `Processed: ${data.processed || 0} | Changes: ${data.changed_count || 0} | Total DB: ${data.total || 0}`;
 
-                    btn.disabled = false;
-                    spinner.classList.add('d-none');
-                    text.innerHTML = "Import to Database";
-                });
-        }
+                        new bootstrap.Toast(document.getElementById('importToast')).show();
+
+                        btn.disabled = false;
+                        spinner.classList.add('d-none');
+                        text.innerHTML = '<i class="bi bi-upload me-1"></i> Import to Database';
+
+                        importing = false; // ✅ unlock
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        alert("Import failed");
+
+                        btn.disabled = false;
+                        spinner.classList.add('d-none');
+                        text.innerHTML = "Import to Database";
+
+                        importing = false; // ✅ IMPORTANT (unlock even on error)
+                    });
+            }
+
+            function clearSession() {
+                const type = "<?= htmlspecialchars($type ?? '') ?>";
+                // UI feedback
+                const importBtn = document.getElementById("importBtn");
+
+                if (importBtn) {
+                    importBtn.disabled = true;
+                    importBtn.innerHTML = "Clearing...";
+                }
+
+                const table = document.querySelector(".table-responsive");
+                if (table) table.remove();
+
+                const alertBox = document.querySelector(".alert-info");
+                if (alertBox) alertBox.remove();
+
+                // build correct redirect URL
+                let url = "index.php";
+
+                if (type === "sales" || type === "delcon") {
+                    url += "?type=" + type;
+                }
+
+                setTimeout(() => {
+                    window.location.href = url;
+                }, 150);
+            }
+
+            document.querySelector("form")?.addEventListener("submit", function () {
+
+                const btn = document.getElementById("uploadBtn");
+                const spinner = document.getElementById("uploadSpinner");
+                const text = document.getElementById("uploadText");
+
+                if (!btn || !spinner || !text) return;
+
+                btn.disabled = true;
+                spinner.classList.remove("d-none");
+                text.innerText = "Uploading...";
+            });
+
+            document.addEventListener("DOMContentLoaded", () => {
+                const importBtn = document.getElementById("importBtn");
+
+                if (!importBtn) return;
+
+                const hasTable = document.querySelector("table tbody tr");
+
+                if (hasTable) {
+                    importBtn.disabled = false;
+                } else {
+                    importBtn.disabled = true;
+                }
+            });
         </script>
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
