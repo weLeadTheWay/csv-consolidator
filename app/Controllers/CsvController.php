@@ -171,7 +171,6 @@ class CsvController
         $file = new SplFileObject($filePath, 'r');
         $file->setFlags(SplFileObject::READ_CSV);
 
-        // read header
         $headers = $file->fgetcsv();
         $type = $_GET['type'] ?? 'sales';
 
@@ -179,7 +178,6 @@ class CsvController
 
         $data = [];
 
-        // jump to start of page (skip header + offset rows)
         $file->seek($offset + 1);
 
         for ($i = 0; $i < $limit && !$file->eof(); $i++) {
@@ -195,16 +193,11 @@ class CsvController
             $data[] = array_combine($headers, $row);
         }
 
-        $validation = $this->validateHeaders($headers, $type);
-
-        // ❌ BLOCK PREVIEW IF INVALID
-        if (!$validation['valid']) {
-            return [
-                'fileId' => $fileId,
-                'validation' => $validation,
-                'data' => []
-            ];
-        }
+        return [
+            'fileId' => $fileId,
+            'validation' => $validation,
+            'data' => $data
+        ];
     }
 
     /*
@@ -429,10 +422,7 @@ class CsvController
         ];
     }
 
-    /**
-     * Optimized version: Fetch existing rows in a single query
-     * Groups by Document No for O(1) lookup
-     */
+
     private function fetchExistingRowsOptimized(array $docNos): array
     {
         if (empty($docNos)) return [];
@@ -518,7 +508,12 @@ class CsvController
 
         fclose($handle);
 
-        return ['inserted' => $inserted];
+        return [
+            'status' => 'SUCCESS',
+            'processed' => $inserted,
+            'changed_count' => 0,
+            'total' => 0
+        ];
     }
 
     /*
