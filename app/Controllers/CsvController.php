@@ -80,7 +80,10 @@ class CsvController
         if (isset($_FILES['csv_file'])) {
 
             if ($_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
-                return ['error' => 'Upload failed'];
+                return [
+                    'error' => 'Upload failed',
+                    'php_error_code' => $_FILES['csv_file']['error']
+                ];
             }
 
             $ext = strtolower(pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION));
