@@ -149,7 +149,7 @@ class CsvController
                 $result = $this->upsertSmart($filePath);
             }
 
-            ob_clean();
+            // ob_clean();
             header('Content-Type: application/json');
 
             echo json_encode([
